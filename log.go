@@ -8,16 +8,14 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"sync"
 	"time"
 
-	"strconv"
-
+	"github.com/labstack/gommon/color"
 	"github.com/mattn/go-colorable"
 	"github.com/mattn/go-isatty"
 	"github.com/valyala/fasttemplate"
-
-	"github.com/labstack/gommon/color"
 )
 
 type (
