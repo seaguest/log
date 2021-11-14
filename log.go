@@ -32,7 +32,7 @@ type (
 		filename   string // filename
 		backups    int    // max backup
 		size       int    // current size
-		maxSize    int    // maxsize per file
+		maxsize    int    // maxsize per file
 		bufferPool sync.Pool
 		mutex      sync.Mutex
 	}
@@ -67,8 +67,6 @@ func New(prefix string) (l *Logger) {
 		prefix:   prefix,
 		template: l.newTemplate(defaultFormat),
 		color:    color.New(),
-		maxSize:  100 * megabyte,
-		backups:  10,
 		bufferPool: sync.Pool{
 			New: func() interface{} {
 				return bytes.NewBuffer(make([]byte, 256))
@@ -86,8 +84,11 @@ func Init(filename string, maxSize, backups int) {
 }
 
 func (l *Logger) init(filename string, maxSize, backups int) {
+	if l.filename == "" {
+		Fatal("invalid filename!")
+	}
 	l.filename = filename
-	l.maxSize = maxSize * megabyte
+	l.maxsize = maxSize * megabyte
 	l.backups = backups
 	l.open()
 }
@@ -99,10 +100,12 @@ func (l *Logger) open() error {
 
 	f, err := os.OpenFile(l.filename, os.O_APPEND|os.O_WRONLY|os.O_CREATE, os.ModePerm)
 	if err != nil {
+		Fatal(err)
 		return err
 	}
 	fi, err := os.Stat(l.filename)
 	if err != nil {
+		Fatal(err)
 		return err
 	}
 	l.size = int(fi.Size())
@@ -305,16 +308,16 @@ func Fatalf(format string, args ...interface{}) {
 }
 
 func (l *Logger) log(v uint8, format string, args ...interface{}) {
+	if v < l.level {
+		return
+	}
+
 	l.mutex.Lock()
 	defer l.mutex.Unlock()
 	buf := l.bufferPool.Get().(*bytes.Buffer)
 	buf.Reset()
 	defer l.bufferPool.Put(buf)
 	_, file, line, _ := runtime.Caller(3)
-
-	if v < l.level {
-		return
-	}
 
 	message := ""
 	if format == "" {
@@ -361,14 +364,13 @@ func (l *Logger) log(v uint8, format string, args ...interface{}) {
 	l.output.Write(buf.Bytes())
 	if l.filename != "" {
 		l.size += len(buf.Bytes())
-		if l.size >= l.maxSize {
+		if l.size >= l.maxsize {
 			l.rotate()
 		}
 	}
 }
 
 func (l *Logger) rotate() error {
-	// backup then continue
 	backupFile := fmt.Sprintf("%s.tmp", l.filename)
 	if err := os.Rename(l.filename, backupFile); err != nil {
 		return err
