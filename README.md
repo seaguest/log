@@ -1,1 +1,1 @@
-a very simplified logger
+a very simple logger,supports log file rotation.
