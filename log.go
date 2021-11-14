@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"os"
 	"path"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -26,6 +29,10 @@ type (
 		template   *fasttemplate.Template
 		levels     []string
 		color      *color.Color
+		filename   string // filename
+		backups    int    // max backup
+		size       int    // current size
+		maxSize    int    // maxsize per file
 		bufferPool sync.Pool
 		mutex      sync.Mutex
 	}
@@ -47,6 +54,7 @@ var (
 	//	"line=${line}, message=${message}\n"
 	defaultFormat = "${prefix}${time_local} ${level}:${pid}:${mid_file}:${line}: ${message}\n"
 	pid           = ""
+	megabyte      = 1024 * 1024
 )
 
 func init() {
@@ -59,6 +67,8 @@ func New(prefix string) (l *Logger) {
 		prefix:   prefix,
 		template: l.newTemplate(defaultFormat),
 		color:    color.New(),
+		maxSize:  100 * megabyte,
+		backups:  10,
 		bufferPool: sync.Pool{
 			New: func() interface{} {
 				return bytes.NewBuffer(make([]byte, 256))
@@ -69,6 +79,35 @@ func New(prefix string) (l *Logger) {
 	l.DisableColor()
 	l.SetOutput(colorable.NewColorableStdout())
 	return
+}
+
+func Init(filename string, maxSize, backups int) {
+	global.init(filename, maxSize, backups)
+}
+
+func (l *Logger) init(filename string, maxSize, backups int) {
+	l.filename = filename
+	l.maxSize = maxSize * megabyte
+	l.backups = backups
+	l.open()
+}
+
+func (l *Logger) open() error {
+	if l.filename == "" {
+		return nil
+	}
+
+	f, err := os.OpenFile(l.filename, os.O_APPEND|os.O_WRONLY|os.O_CREATE, os.ModePerm)
+	if err != nil {
+		return err
+	}
+	fi, err := os.Stat(l.filename)
+	if err != nil {
+		return err
+	}
+	l.size = int(fi.Size())
+	SetOutput(f)
+	return nil
 }
 
 func (l *Logger) initLevels() {
@@ -205,6 +244,10 @@ func Output() io.Writer {
 	return global.Output()
 }
 
+func Writer() *Logger {
+	return global
+}
+
 func SetOutput(w io.Writer) {
 	global.SetOutput(w)
 }
@@ -269,48 +312,107 @@ func (l *Logger) log(v uint8, format string, args ...interface{}) {
 	defer l.bufferPool.Put(buf)
 	_, file, line, _ := runtime.Caller(3)
 
-	if v >= l.level {
-		message := ""
-		if format == "" {
-			message = fmt.Sprint(args...)
-		} else {
-			message = fmt.Sprintf(format, args...)
-		}
-		if v == FATAL {
-			stack := make([]byte, 4<<10)
-			length := runtime.Stack(stack, true)
-			message = message + "\n" + string(stack[:length])
-		}
+	if v < l.level {
+		return
+	}
 
-		_, err := l.template.ExecuteFunc(buf, func(w io.Writer, tag string) (int, error) {
-			switch tag {
-			case "time_local":
-				return w.Write([]byte(time.Now().Format(timeLocal)))
-			case "time_rfc3339":
-				return w.Write([]byte(time.Now().Format(time.RFC3339)))
-			case "level":
-				return w.Write([]byte(l.levels[v]))
-			case "pid":
-				return w.Write([]byte(pid))
-			case "prefix":
-				return w.Write([]byte(l.prefix))
-			case "long_file":
-				return w.Write([]byte(file))
-			case "short_file":
-				return w.Write([]byte(path.Base(file)))
-			case "mid_file":
-				return w.Write([]byte(filepath.Base(filepath.Dir(file)) + "/" + filepath.Base(file)))
-			case "line":
-				return w.Write([]byte(strconv.Itoa(line)))
-			case "message":
-				return w.Write([]byte(message))
-			default:
-				return w.Write([]byte(fmt.Sprintf("[unknown tag %s]", tag)))
-			}
-		})
+	message := ""
+	if format == "" {
+		message = fmt.Sprint(args...)
+	} else {
+		message = fmt.Sprintf(format, args...)
+	}
+	if v == FATAL {
+		stack := make([]byte, 4<<10)
+		length := runtime.Stack(stack, true)
+		message = message + "\n" + string(stack[:length])
+	}
 
-		if err == nil {
-			l.output.Write(buf.Bytes())
+	_, err := l.template.ExecuteFunc(buf, func(w io.Writer, tag string) (int, error) {
+		switch tag {
+		case "time_local":
+			return w.Write([]byte(time.Now().Format(timeLocal)))
+		case "time_rfc3339":
+			return w.Write([]byte(time.Now().Format(time.RFC3339)))
+		case "level":
+			return w.Write([]byte(l.levels[v]))
+		case "pid":
+			return w.Write([]byte(pid))
+		case "prefix":
+			return w.Write([]byte(l.prefix))
+		case "long_file":
+			return w.Write([]byte(file))
+		case "short_file":
+			return w.Write([]byte(path.Base(file)))
+		case "mid_file":
+			return w.Write([]byte(filepath.Base(filepath.Dir(file)) + "/" + filepath.Base(file)))
+		case "line":
+			return w.Write([]byte(strconv.Itoa(line)))
+		case "message":
+			return w.Write([]byte(message))
+		default:
+			return w.Write([]byte(fmt.Sprintf("[unknown tag %s]", tag)))
+		}
+	})
+
+	if err != nil {
+		return
+	}
+	l.output.Write(buf.Bytes())
+	if l.filename != "" {
+		l.size += len(buf.Bytes())
+		if l.size >= l.maxSize {
+			l.rotate()
 		}
 	}
+}
+
+func (l *Logger) rotate() error {
+	// backup then continue
+	backupFile := fmt.Sprintf("%s.tmp", l.filename)
+	if err := os.Rename(l.filename, backupFile); err != nil {
+		return err
+	}
+
+	if err := l.open(); err != nil {
+		return err
+	}
+
+	go func() {
+		dir := filepath.Dir(l.filename)
+		base := filepath.Base(l.filename)
+		list, err := ioutil.ReadDir(dir)
+		if err != nil {
+			return
+		}
+
+		var archives []int
+		for _, file := range list {
+			if file.IsDir() || !strings.HasPrefix(file.Name(), base) {
+				continue
+			}
+
+			idxStr := strings.TrimPrefix(file.Name(), base+".")
+			idx, _ := strconv.Atoi(idxStr)
+			if idx != 0 {
+				archives = append(archives, idx)
+			}
+		}
+
+		sort.Sort(sort.Reverse(sort.IntSlice(archives)))
+		for _, i := range archives {
+			filename := fmt.Sprintf("%s.%d", l.filename, i)
+			if i+1 >= l.backups {
+				os.Remove(filename)
+				continue
+			}
+
+			newFile := fmt.Sprintf("%s.%d", l.filename, i+1)
+			err = os.Rename(filename, newFile)
+		}
+
+		newFile := fmt.Sprintf("%s.%d", l.filename, 1)
+		os.Rename(backupFile, newFile)
+	}()
+	return nil
 }
