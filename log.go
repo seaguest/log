@@ -84,8 +84,8 @@ func Init(filename string, maxSize, backups int) {
 }
 
 func (l *Logger) init(filename string, maxSize, backups int) {
-	if l.filename == "" {
-		Fatal("invalid filename!")
+	if filename == "" {
+		Fatal("empty log filename!")
 	}
 	l.filename = filename
 	l.maxsize = maxSize * megabyte
