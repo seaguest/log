@@ -48,7 +48,7 @@ const (
 )
 
 var (
-	global    = New("")
+	global    = New("", 0, 0)
 	timeLocal = "2006-01-02 15:04:05.999"
 	//defaultFormat = "time=${time_rfc3339}, level=${level}, prefix=${prefix}, file=${short_file}, " +
 	//	"line=${line}, message=${message}\n"
@@ -61,10 +61,13 @@ func init() {
 	pid = strconv.Itoa(os.Getpid())
 }
 
-func New(prefix string) (l *Logger) {
+func New(filename string, maxsize, backups int) (l *Logger) {
 	l = &Logger{
 		level:    INFO,
-		prefix:   prefix,
+		prefix:   "",
+		filename: filename,
+		maxsize:  maxsize,
+		backups:  backups,
 		template: l.newTemplate(defaultFormat),
 		color:    color.New(),
 		bufferPool: sync.Pool{
@@ -75,42 +78,27 @@ func New(prefix string) (l *Logger) {
 	}
 	l.initLevels()
 	l.DisableColor()
-	l.SetOutput(colorable.NewColorableStdout())
+	if l.filename != "" {
+		l.open()
+	} else {
+		l.SetOutput(colorable.NewColorableStdout())
+	}
 	return
 }
 
-func Init(filename string, maxSize, backups int) {
-	global.init(filename, maxSize, backups)
-}
-
-func (l *Logger) init(filename string, maxSize, backups int) {
-	if filename == "" {
-		Fatal("empty log filename!")
-	}
-	l.filename = filename
-	l.maxsize = maxSize * megabyte
-	l.backups = backups
-	l.open()
-}
-
-func (l *Logger) open() error {
-	if l.filename == "" {
-		return nil
-	}
-
+func (l *Logger) open() {
 	f, err := os.OpenFile(l.filename, os.O_APPEND|os.O_WRONLY|os.O_CREATE, os.ModePerm)
 	if err != nil {
 		Fatal(err)
-		return err
+		return
 	}
 	fi, err := os.Stat(l.filename)
 	if err != nil {
 		Fatal(err)
-		return err
+		return
 	}
 	l.size = int(fi.Size())
-	SetOutput(f)
-	return nil
+	l.SetOutput(f)
 }
 
 func (l *Logger) initLevels() {
@@ -245,10 +233,6 @@ func SetLevel(v uint8) {
 
 func Output() io.Writer {
 	return global.Output()
-}
-
-func Writer() *Logger {
-	return global
 }
 
 func SetOutput(w io.Writer) {
