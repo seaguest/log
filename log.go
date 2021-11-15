@@ -24,7 +24,7 @@ import (
 type (
 	Logger struct {
 		prefix     string
-		level      uint8
+		level      int
 		output     io.Writer
 		template   *fasttemplate.Template
 		levels     []string
@@ -48,7 +48,7 @@ const (
 )
 
 var (
-	global    = New("", 0, 0)
+	global    = New("", INFO, 0, 0)
 	timeLocal = "2006-01-02 15:04:05.999"
 	//defaultFormat = "time=${time_rfc3339}, level=${level}, prefix=${prefix}, file=${short_file}, " +
 	//	"line=${line}, message=${message}\n"
@@ -61,9 +61,9 @@ func init() {
 	pid = strconv.Itoa(os.Getpid())
 }
 
-func New(filename string, maxsize, backups int) (l *Logger) {
+func New(filename string, level, maxsize, backups int) (l *Logger) {
 	l = &Logger{
-		level:    INFO,
+		level:    level,
 		prefix:   "",
 		filename: filename,
 		maxsize:  maxsize,
@@ -89,12 +89,12 @@ func New(filename string, maxsize, backups int) (l *Logger) {
 func (l *Logger) open() {
 	f, err := os.OpenFile(l.filename, os.O_APPEND|os.O_WRONLY|os.O_CREATE, os.ModePerm)
 	if err != nil {
-		Fatal(err)
+		l.Error(err)
 		return
 	}
 	fi, err := os.Stat(l.filename)
 	if err != nil {
-		Fatal(err)
+		l.Error(err)
 		return
 	}
 	l.size = int(fi.Size())
@@ -133,11 +133,11 @@ func (l *Logger) SetPrefix(p string) {
 	l.prefix = p
 }
 
-func (l *Logger) Level() uint8 {
+func (l *Logger) Level() int {
 	return l.level
 }
 
-func (l *Logger) SetLevel(v uint8) {
+func (l *Logger) SetLevel(v int) {
 	l.level = v
 }
 
@@ -223,11 +223,11 @@ func SetPrefix(p string) {
 	global.SetPrefix(p)
 }
 
-func Level() uint8 {
+func Level() int {
 	return global.Level()
 }
 
-func SetLevel(v uint8) {
+func SetLevel(v int) {
 	global.SetLevel(v)
 }
 
@@ -291,7 +291,7 @@ func Fatalf(format string, args ...interface{}) {
 	global.Fatalf(format, args...)
 }
 
-func (l *Logger) log(v uint8, format string, args ...interface{}) {
+func (l *Logger) log(v int, format string, args ...interface{}) {
 	if v < l.level {
 		return
 	}
@@ -354,21 +354,22 @@ func (l *Logger) log(v uint8, format string, args ...interface{}) {
 	}
 }
 
-func (l *Logger) rotate() error {
+func (l *Logger) rotate() {
 	backupFile := fmt.Sprintf("%s.tmp", l.filename)
+	os.Remove(backupFile)
 	if err := os.Rename(l.filename, backupFile); err != nil {
-		return err
+		l.Error(err)
+		return
 	}
 
-	if err := l.open(); err != nil {
-		return err
-	}
+	l.open()
 
 	go func() {
 		dir := filepath.Dir(l.filename)
 		base := filepath.Base(l.filename)
 		list, err := ioutil.ReadDir(dir)
 		if err != nil {
+			l.Error(err)
 			return
 		}
 
@@ -394,11 +395,10 @@ func (l *Logger) rotate() error {
 			}
 
 			newFile := fmt.Sprintf("%s.%d", l.filename, i+1)
-			err = os.Rename(filename, newFile)
+			os.Rename(filename, newFile)
 		}
 
 		newFile := fmt.Sprintf("%s.%d", l.filename, 1)
 		os.Rename(backupFile, newFile)
 	}()
-	return nil
 }
