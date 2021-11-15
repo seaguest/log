@@ -66,7 +66,7 @@ func New(filename string, level, maxsize, backups int) (l *Logger) {
 		level:    level,
 		prefix:   "",
 		filename: filename,
-		maxsize:  maxsize,
+		maxsize:  maxsize * megabyte,
 		backups:  backups,
 		template: l.newTemplate(defaultFormat),
 		color:    color.New(),
