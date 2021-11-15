@@ -86,6 +86,10 @@ func New(filename string, level, maxsize, backups int) (l *Logger) {
 	return
 }
 
+func SetLogger(l *Logger) {
+	global = l
+}
+
 func (l *Logger) open() {
 	f, err := os.OpenFile(l.filename, os.O_APPEND|os.O_WRONLY|os.O_CREATE, os.ModePerm)
 	if err != nil {
