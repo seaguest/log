@@ -35,6 +35,7 @@ type (
 		maxsize    int    // maxsize per file
 		bufferPool sync.Pool
 		mutex      sync.Mutex
+		eCallback  func()
 	}
 )
 
@@ -48,7 +49,7 @@ const (
 )
 
 var (
-	global    = New("", INFO, 0, 0)
+	global    = New("")
 	timeLocal = "2006-01-02 15:04:05.999"
 	//defaultFormat = "time=${time_rfc3339}, level=${level}, prefix=${prefix}, file=${short_file}, " +
 	//	"line=${line}, message=${message}\n"
@@ -61,13 +62,22 @@ func init() {
 	pid = strconv.Itoa(os.Getpid())
 }
 
-func New(filename string, level, maxsize, backups int) (l *Logger) {
+func Init(filename string, level, maxsize, backups int, errCallback func()) {
+	global.filename = filename
+	global.level = level
+	global.maxsize = maxsize * megabyte
+	global.backups = backups
+	global.eCallback = errCallback
+
+	if global.filename != "" {
+		global.open()
+	}
+}
+
+func New(prefix string) (l *Logger) {
 	l = &Logger{
-		level:    level,
-		prefix:   "",
-		filename: filename,
-		maxsize:  maxsize * megabyte,
-		backups:  backups,
+		level:    INFO,
+		prefix:   prefix,
 		template: l.newTemplate(defaultFormat),
 		color:    color.New(),
 		bufferPool: sync.Pool{
@@ -78,16 +88,8 @@ func New(filename string, level, maxsize, backups int) (l *Logger) {
 	}
 	l.initLevels()
 	l.DisableColor()
-	if l.filename != "" {
-		l.open()
-	} else {
-		l.SetOutput(colorable.NewColorableStdout())
-	}
+	l.SetOutput(colorable.NewColorableStdout())
 	return
-}
-
-func SetLogger(l *Logger) {
-	global = l
 }
 
 func (l *Logger) open() {
@@ -195,10 +197,16 @@ func (l *Logger) Warnf(format string, args ...interface{}) {
 
 func (l *Logger) Error(i ...interface{}) {
 	l.log(ERROR, "", i...)
+	if l.eCallback != nil {
+		go l.eCallback()
+	}
 }
 
 func (l *Logger) Errorf(format string, args ...interface{}) {
 	l.log(ERROR, format, args...)
+	if l.eCallback != nil {
+		go l.eCallback()
+	}
 }
 
 func (l *Logger) Fatal(i ...interface{}) {
