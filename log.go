@@ -35,7 +35,7 @@ type (
 		maxsize    int    // maxsize per file
 		bufferPool sync.Pool
 		mutex      sync.Mutex
-		eCallback  func()
+		callbacks  map[int]func()
 	}
 )
 
@@ -49,7 +49,7 @@ const (
 )
 
 var (
-	global    = New("")
+	global    = New("", INFO, 0, 0)
 	timeLocal = "2006-01-02 15:04:05.999"
 	//defaultFormat = "time=${time_rfc3339}, level=${level}, prefix=${prefix}, file=${short_file}, " +
 	//	"line=${line}, message=${message}\n"
@@ -62,22 +62,13 @@ func init() {
 	pid = strconv.Itoa(os.Getpid())
 }
 
-func Init(filename string, level, maxsize, backups int, errCallback func()) {
-	global.filename = filename
-	global.level = level
-	global.maxsize = maxsize * megabyte
-	global.backups = backups
-	global.eCallback = errCallback
-
-	if global.filename != "" {
-		global.open()
-	}
-}
-
-func New(prefix string) (l *Logger) {
+func New(filename string, level, maxsize, backups int) (l *Logger) {
 	l = &Logger{
-		level:    INFO,
-		prefix:   prefix,
+		level:    level,
+		prefix:   "",
+		filename: filename,
+		maxsize:  maxsize * megabyte,
+		backups:  backups,
 		template: l.newTemplate(defaultFormat),
 		color:    color.New(),
 		bufferPool: sync.Pool{
@@ -86,10 +77,23 @@ func New(prefix string) (l *Logger) {
 			},
 		},
 	}
+	l.callbacks = make(map[int]func())
 	l.initLevels()
 	l.DisableColor()
-	l.SetOutput(colorable.NewColorableStdout())
+	if l.filename != "" {
+		l.open()
+	} else {
+		l.SetOutput(colorable.NewColorableStdout())
+	}
 	return
+}
+
+func SetLogger(l *Logger) {
+	global = l
+}
+
+func (l *Logger) SetCallback(level int, callback func()) {
+	l.callbacks[level] = callback
 }
 
 func (l *Logger) open() {
@@ -197,16 +201,10 @@ func (l *Logger) Warnf(format string, args ...interface{}) {
 
 func (l *Logger) Error(i ...interface{}) {
 	l.log(ERROR, "", i...)
-	if l.eCallback != nil {
-		go l.eCallback()
-	}
 }
 
 func (l *Logger) Errorf(format string, args ...interface{}) {
 	l.log(ERROR, format, args...)
-	if l.eCallback != nil {
-		go l.eCallback()
-	}
 }
 
 func (l *Logger) Fatal(i ...interface{}) {
@@ -306,6 +304,11 @@ func Fatalf(format string, args ...interface{}) {
 func (l *Logger) log(v int, format string, args ...interface{}) {
 	if v < l.level {
 		return
+	}
+
+	callback := l.callbacks[v]
+	if callback != nil {
+		callback()
 	}
 
 	l.mutex.Lock()
