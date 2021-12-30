@@ -35,7 +35,7 @@ type (
 		maxsize    int    // maxsize per file
 		bufferPool sync.Pool
 		mutex      sync.Mutex
-		callbacks  map[int]func(tag, msg string)
+		callbacks  map[int]func(msg string)
 	}
 )
 
@@ -77,7 +77,7 @@ func New(filename string, level, maxsize, backups int) (l *Logger) {
 			},
 		},
 	}
-	l.callbacks = make(map[int]func(tag, msg string))
+	l.callbacks = make(map[int]func(msg string))
 	l.initLevels()
 	l.DisableColor()
 	if l.filename != "" {
@@ -92,7 +92,7 @@ func SetLogger(l *Logger) {
 	global = l
 }
 
-func (l *Logger) SetCallback(level int, callback func(tag, msg string)) {
+func (l *Logger) SetCallback(level int, callback func(msg string)) {
 	l.callbacks[level] = callback
 }
 
@@ -328,11 +328,7 @@ func (l *Logger) log(v int, format string, args ...interface{}) {
 	callback := l.callbacks[v]
 	if callback != nil {
 		msg := fmt.Sprintf("%s %s:%s:%s:%d: %s\n", time.Now().Format(timeLocal), l.levels[v], pid, filepath.Base(filepath.Dir(file))+"/"+filepath.Base(file), line, message)
-		tag := ""
-		if len(args) > 1 {
-			tag = fmt.Sprint(args[0])
-		}
-		go callback(tag, msg)
+		go callback(msg)
 	}
 
 	_, err := l.template.ExecuteFunc(buf, func(w io.Writer, tag string) (int, error) {
