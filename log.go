@@ -332,7 +332,12 @@ func (l *Logger) log(v int, format string, args ...interface{}) {
 	callback := l.callbacks[v]
 	if callback != nil {
 		msg := fmt.Sprintf("%s %s:%s:%s:%d: %s\n", time.Now().Format(timeLocal), l.levels[v], pid, filepath.Base(filepath.Dir(file))+"/"+filepath.Base(file), line, message)
-		go callback(msg)
+		if v == FATAL {
+			// wait callback
+			callback(msg)
+		} else {
+			go callback(msg)
+		}
 	}
 
 	_, err := l.template.ExecuteFunc(buf, func(w io.Writer, tag string) (int, error) {
