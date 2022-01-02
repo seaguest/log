@@ -96,6 +96,10 @@ func GetLogger() *Logger {
 	return global
 }
 
+func SetCallback(level int, callback func(msg string)) {
+	global.SetCallback(level, callback)
+}
+
 func (l *Logger) SetCallback(level int, callback func(msg string)) {
 	l.callbacks[level] = callback
 }
