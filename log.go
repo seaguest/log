@@ -175,12 +175,30 @@ func (l *Logger) SetOutput(w io.Writer) {
 }
 
 func (l *Logger) Print(i ...interface{}) {
-	fmt.Fprintln(l.output, i...)
+	l.mutex.Lock()
+	defer l.mutex.Unlock()
+
+	n, _ := fmt.Fprintln(l.output, i...)
+	if l.filename != "" {
+		l.size += n
+		if l.size >= l.maxsize {
+			l.rotate()
+		}
+	}
 }
 
 func (l *Logger) Printf(format string, args ...interface{}) {
+	l.mutex.Lock()
+	defer l.mutex.Unlock()
+
 	f := fmt.Sprintf("%s\n", format)
-	fmt.Fprintf(l.output, f, args...)
+	n, _ := fmt.Fprintf(l.output, f, args...)
+	if l.filename != "" {
+		l.size += n
+		if l.size >= l.maxsize {
+			l.rotate()
+		}
+	}
 }
 
 func (l *Logger) Debug(i ...interface{}) {
